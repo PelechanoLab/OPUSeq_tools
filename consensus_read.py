@@ -196,7 +196,7 @@ def main():
 
     # Initialize Counters:
     # Counter for reads UMI-processed, and for number of raw reads
-    paired_end_count = 1
+    paired_end_count = 0
     # Counter for number of families
     familyCtr = 0
     # Counter for DCS UMIs with bad UMIs
@@ -246,39 +246,33 @@ def main():
 #        fAlign2 = gzip.open(f"{o.prefix}_aln_seq2.fq.gz", 'wt')
 
     # This block of code takes an unaligned bam file, extracts the tag
-    # sequences from the reads, and converts them to to "ab/ba" format
+    # sequences from the reads, and converts them to to "FR/RF" format
     # where 'a' and 'b' are the tag sequences from Read 1 and Read 2,
     # respectively. Conversion occurs by putting the tag with the "lesser"
     # value in front of the tag with the "higher" value. The original
-    # tag orientation is denoted by appending #ab or #ba to the end of
+    # tag orientation is denoted by appending #FR or #RF to the end of
     # the tag. After conversion, the resulting temporary bam file is then
     # sorted by read name.
 
     for line in in_bam_file.fetch(until_eof=True):
-
-        if paired_end_count % 2 == 1:
-            original_name = line.query_name
-            query_name = f"{line.reference_start}_{abs(line.template_length)}"
-            umi_tag = line.query_name.split("_")[1]
-            if line.is_read1 and line.is_reverse:
-                if o.UMI:
-                    umi_tag = umi_tag[6:] + umi_tag[0:6]
-                    query_name += f"_{umi_tag}#ba:1"
-                else:
-                    query_name += f"#ba:1"
+        original_name = line.query_name
+        if line.is_reverse:
+            query_name = f"{line.next_reference_start+1}_{abs(line.template_length)}"
+        else:
+            query_name = f"{line.reference_start+1}_{abs(line.template_length)}"
+        label = line.query_name.split("_")[1]
+        pair_tag = label.split("#")[1]
+        if o.UMI:
+            if "RF" in pair_tag:
+                umi_tag = label.split("#")[0][6:] + label.split("#")[0][0:6]
             else:
-                if o.UMI:
-                    query_name += f"_{umi_tag}#ab:1"
-                else:
-                    query_name += f"#ab:1"
-            line.query_name = query_name
-            line.set_tag('X?', original_name, 'Z')
-            temp_bam.write(line)
-
-        if paired_end_count % 2 == 0:
-            line.query_name = query_name.replace(':1', ':2')
-            line.set_tag('X?', original_name, 'Z')
-            temp_bam.write(line)
+                umi_tag = label.split("#")[0]
+            query_name += f"_{umi_tag}#{pair_tag}"
+        else:
+            query_name += f"#{pair_tag}"
+        line.query_name = query_name
+        line.set_tag('X?', original_name, 'Z')
+        temp_bam.write(line)
 
         paired_end_count += 1
 
@@ -288,9 +282,9 @@ def main():
     pysam.sort("-n", "-@", f"{o.cores}", "-o", f"{o.prefix}.temp.sort.bam", f"{o.prefix}.temp.bam")
     os.remove(f"{o.prefix}.temp.bam")
 
-    seq_dict = {'ab:1': [], 'ab:2': [], 'ba:1': [], 'ba:2': []}
-    qual_dict = {'ab:1': [], 'ab:2': [], 'ba:1': [], 'ba:2': []}
-    last_seq = {'ab:1': [], 'ab:2': [], 'ba:1': [], 'ba:2': []}
+    seq_dict = {'FR:1': [], 'FR:2': [], 'RF:1': [], 'RF:2': []}
+    qual_dict = {'FR:1': [], 'FR:2': [], 'RF:1': [], 'RF:2': []}
+    last_seq = {'FR:1': [], 'FR:2': [], 'RF:1': [], 'RF:2': []}
     fam_size_x_axis = []
     fam_size_y_axis = []
 
@@ -302,7 +296,7 @@ def main():
     first_line = next(in_bam_file)
     readsCtr += 1
     FinalValue = pysam.AlignedSegment()
-    FinalValue.query_name = "FinalValue#ab:1"
+    FinalValue.query_name = "FinalValue#FR:1"
 
     seq_dict[first_line.query_name.split('#')[1]].append(
         first_line.query_sequence
@@ -329,8 +323,8 @@ def main():
 
         else:
             famSizes = {x: len(seq_dict[x]) for x in seq_dict}
-            if (famSizes['ab:1'] != famSizes['ab:2']
-                    or famSizes['ba:1'] != famSizes['ba:2']
+            if (famSizes['FR:1'] != famSizes['FR:2']
+                    or famSizes['RF:1'] != famSizes['RF:2']
                     ):
                 raise Exception(f'ERROR: Read counts for Read1 and Read 2 do '
                                 f'not match for tag {tag}'
@@ -344,7 +338,7 @@ def main():
                         #       f"calculating the SSCS are not uniform!!!"
                         #       ))
                         imbalance = True
-                        break
+
                 if not imbalance:
                     if famSizes[tag_subtype] > 0:
                         tag_count_dict[famSizes[tag_subtype]] += 1
@@ -383,102 +377,97 @@ def main():
 
             if o.write_sscs is True:
 
-                if len(seq_dict['ab:1']) != 0 and len(seq_dict['ab:2']) != 0:
-                    #ab_read1 = pysam.AlignedSegment()
-                    #ab_read2 = pysam.AlignedSegment()
-                    ab_read1 = last_seq['ab:1']
-                    ab_read2 = last_seq['ab:2']
-                    ab_read1.query_sequence = seq_dict['ab:1'][0]
-                    ab_read2.query_sequence = seq_dict['ab:2'][0]
-                    ab_read1.query_qualities = [x if x < 41 else 41 for x in qual_dict['ab:1']]
-                    ab_read2.query_qualities = [x if x < 41 else 41 for x in qual_dict['ab:2']]
+                if len(seq_dict['FR:1']) != 0 and len(seq_dict['FR:2']) != 0:
+                    FR_read1 = last_seq['FR:1']
+                    FR_read2 = last_seq['FR:2']
+                    FR_read1.query_sequence = seq_dict['FR:1'][0]
+                    FR_read2.query_sequence = seq_dict['FR:2'][0]
+                    FR_read1.query_qualities = [x if x < 41 else 41 for x in qual_dict['FR:1']]
+                    FR_read2.query_qualities = [x if x < 41 else 41 for x in qual_dict['FR:2']]
 
                     corrected_qual_score = map(
-                        lambda x: x if x < 41 else 41, qual_dict['ab:1']
+                        lambda x: x if x < 41 else 41, qual_dict['FR:1']
                     )
                     corrQualStr = ''.join(
                         chr(x + 33) for x in corrected_qual_score
                     )
-                    read1_sscs_fq_file.write(f"@{tag}#ab/1 XF:Z:{seq_dict['ab:1'][1]}\n"
-                                             f"{seq_dict['ab:1'][0]}\n"
-                                             f"+{seq_dict['ab:1'][1]}\n"
+                    read1_sscs_fq_file.write(f"@{tag}#FR/1 XF:Z:{seq_dict['FR:1'][1]}\n"
+                                             f"{seq_dict['FR:1'][0]}\n"
+                                             f"+{seq_dict['FR:1'][1]}\n"
                                              f"{corrQualStr}\n"
                                              )
 
                     corrected_qual_score = map(
-                        lambda x: x if x < 41 else 41, qual_dict['ab:2']
+                        lambda x: x if x < 41 else 41, qual_dict['FR:2']
                     )
                     corrQualStr = ''.join(
                         chr(x + 33) for x in corrected_qual_score
                     )
-                    read2_sscs_fq_file.write(f"@{tag}#ab/2 XF:Z:{seq_dict['ab:2'][1]}\n"
-                                             f"{seq_dict['ab:2'][0]}\n"
-                                             f"+{seq_dict['ab:2'][1]}\n"
+                    read2_sscs_fq_file.write(f"@{tag}#FR/2 XF:Z:{seq_dict['FR:2'][1]}\n"
+                                             f"{seq_dict['FR:2'][0]}\n"
+                                             f"+{seq_dict['FR:2'][1]}\n"
                                              f"{corrQualStr}\n"
                                              )
 
-                    sscs_bam_file.write(ab_read1)
-                    sscs_bam_file.write(ab_read2)
+                    sscs_bam_file.write(FR_read1)
+                    sscs_bam_file.write(FR_read2)
 
-                if len(seq_dict['ba:1']) != 0 and len(seq_dict['ba:2']) != 0:
+                if len(seq_dict['RF:1']) != 0 and len(seq_dict['RF:2']) != 0:
 
-                    ba_read1 = last_seq['ba:1']
-                    ba_read2 = last_seq['ba:2']
-                    ba_read1.query_sequence = seq_dict['ba:1'][0]
-                    ba_read2.query_sequence = seq_dict['ba:2'][0]
-                    #print(ba_read2.query_name,seq_dict['ba:2'][0])
-                    #print([x if x < 41 else 41 for x in qual_dict['ba:2']])
-
-                    ba_read1.query_qualities = [x if x < 41 else 41 for x in qual_dict['ba:1']]
-                    ba_read2.query_qualities = [x if x < 41 else 41 for x in qual_dict['ba:2']]
+                    RF_read1 = last_seq['RF:1']
+                    RF_read2 = last_seq['RF:2']
+                    RF_read1.query_sequence = seq_dict['RF:1'][0]
+                    RF_read2.query_sequence = seq_dict['RF:2'][0]
+                    RF_read1.query_qualities = [x if x < 41 else 41 for x in qual_dict['RF:1']]
+                    RF_read2.query_qualities = [x if x < 41 else 41 for x in qual_dict['RF:2']]
 
                     corrected_qual_score = map(
-                        lambda x: x if x < 41 else 41, qual_dict['ba:1']
+                        lambda x: x if x < 41 else 41, qual_dict['RF:1']
                     )
                     corrQualStr = ''.join(
                         chr(x + 33) for x in corrected_qual_score
                     )
 
-                    read1_sscs_fq_file.write(f"@{tag}#ba/1 XF:Z:{seq_dict['ba:1'][1]}\n"
-                                             f"{seq_dict['ba:1'][0]}\n"
-                                             f"+{seq_dict['ba:1'][1]}\n"
+                    read1_sscs_fq_file.write(f"@{tag}#RF/1 XF:Z:{seq_dict['RF:1'][1]}\n"
+                                             f"{seq_dict['RF:1'][0]}\n"
+                                             f"+{seq_dict['RF:1'][1]}\n"
                                              f"{corrQualStr}\n"
                                              )
 
                     corrected_qual_score = map(
-                        lambda x: x if x < 41 else 41, qual_dict['ba:2']
+                        lambda x: x if x < 41 else 41, qual_dict['RF:2']
                     )
                     corrQualStr = ''.join(
                         chr(x + 33) for x in corrected_qual_score
                     )
 
-                    read2_sscs_fq_file.write(f"@{tag}#ba/2 XF:Z:{seq_dict['ba:2'][1]}\n"
-                                             f"{seq_dict['ba:2'][0]}\n"
-                                             f"+{seq_dict['ba:2'][1]}\n"
+                    read2_sscs_fq_file.write(f"@{tag}#RF/2 XF:Z:{seq_dict['RF:2'][1]}\n"
+                                             f"{seq_dict['RF:2'][0]}\n"
+                                             f"+{seq_dict['RF:2'][1]}\n"
                                              f"{corrQualStr}\n"
                                              )
 
-                    sscs_bam_file.write(ba_read1)
-                    sscs_bam_file.write(ba_read2)
+                    sscs_bam_file.write(RF_read1)
+                    sscs_bam_file.write(RF_read2)
 
             if o.without_dcs is False:
-                if len(seq_dict['ab:1']) != 0 and len(seq_dict['ba:2']) != 0:
+                if len(seq_dict['FR:1']) != 0 and len(seq_dict['RF:2']) != 0:
                     numDCS += 1
                     dcs_read_1 = [
                         consensus_caller(
-                            [seq_dict['ab:1'][0], seq_dict['ba:2'][0]],
+                            [seq_dict['FR:1'][0], seq_dict['RF:2'][0]],
                             1,
                             tag,
                         ),
-                        seq_dict['ab:1'][1], seq_dict['ba:2'][1]
+                        seq_dict['FR:1'][1], seq_dict['RF:2'][1]
                     ]
                     dcs_read_1_qual = map(
                         lambda x: x if x < 41 else 41,
-                        qual_calc([qual_dict['ab:1'], qual_dict['ba:2']])
+                        qual_calc([qual_dict['FR:1'], qual_dict['RF:2']])
                     )
                     read1_dcs_len = len(dcs_read_1[0])
-                    fam_size_x_axis.append(int(seq_dict['ab:1'][1]))
-                    fam_size_y_axis.append(int(seq_dict['ba:2'][1]))
+                    fam_size_x_axis.append(int(seq_dict['FR:1'][1]))
+                    fam_size_y_axis.append(int(seq_dict['RF:2'][1]))
 
                     if dcs_read_1[0].count('N') / read1_dcs_len > o.Ncutoff:
                         highN_DCS += 1
@@ -486,19 +475,19 @@ def main():
                         dcs_read_1_qual = [0 for x in range(read1_dcs_len)]
                 else:
                     failedDcs += 1
-                if len(seq_dict['ba:1']) != 0 and len(seq_dict['ab:2']) != 0:
+                if len(seq_dict['RF:1']) != 0 and len(seq_dict['FR:2']) != 0:
                     numDCS += 1
                     dcs_read_2 = [
                         consensus_caller(
-                            [seq_dict['ba:1'][0], seq_dict['ab:2'][0]],
+                            [seq_dict['RF:1'][0], seq_dict['FR:2'][0]],
                             1,
                             tag,
                         ),
-                        seq_dict['ba:1'][1], seq_dict['ab:2'][1]
+                        seq_dict['RF:1'][1], seq_dict['FR:2'][1]
                     ]
                     dcs_read_2_qual = map(
                         lambda x: x if x < 41 else 41,
-                        qual_calc([qual_dict['ba:1'], qual_dict['ab:2']])
+                        qual_calc([qual_dict['RF:1'], qual_dict['FR:2']])
                     )
                     read2_dcs_len = len(dcs_read_2[0])
 
@@ -531,8 +520,8 @@ def main():
                         f"{r2QualStr}\n"
                     )
 
-                    read1 = last_seq['ab:1']
-                    read2 = last_seq['ab:2']
+                    read1 = last_seq['FR:1']
+                    read2 = last_seq['FR:2']
                     read1.query_name = tag
                     read2.query_name = tag
                     read1.query_sequence = dcs_read_1[0]
@@ -555,8 +544,8 @@ def main():
                 readsCtr += 1
                 # reset conditions for next tag family
                 first_line = line
-                seq_dict = {'ab:1': [], 'ab:2': [], 'ba:1': [], 'ba:2': []}
-                qual_dict = {'ab:1': [], 'ab:2': [], 'ba:1': [], 'ba:2': []}
+                seq_dict = {'FR:1': [], 'FR:2': [], 'RF:1': [], 'RF:2': []}
+                qual_dict = {'FR:1': [], 'FR:2': [], 'RF:1': [], 'RF:2': []}
                 read1_dcs_len = 0
                 read2_dcs_len = 0
                 dcs_read_1 = ''
@@ -605,8 +594,8 @@ def main():
             plt.figure(2)
             if len(fam_size_x_axis) != 0:
                 plt.scatter(fam_size_x_axis, fam_size_y_axis, alpha=.1)
-                plt.xlabel('Family size for AB:1')
-                plt.ylabel('Family size for BA:2')
+                plt.xlabel('Family size for FR:1')
+                plt.ylabel('Family size for RF:2')
                 plt.xlim(0, max(fam_size_x_axis))
                 plt.ylim(0, max(fam_size_y_axis))
             plt.savefig(f"{o.prefix}_fam_size_relation.png",
@@ -631,6 +620,7 @@ def main():
         f"Finished at {endTimeStr}\n"
         f"{paired_end_count} reads UMI processed\n"
         f"{readsCtr} reads processed\n"
+        f"{familyCtr} families processed\n"
         f"{familyCtr} families processed\n"
         f"\t{zeroFamilySize} unrepresented families\n"
         f"\t{smallFamilySize} families with family size < {o.minmem}\n"
