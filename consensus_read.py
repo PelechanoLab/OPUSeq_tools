@@ -262,6 +262,10 @@ def main():
             query_name = f"{line.reference_start+1}_{abs(line.template_length)}"
         label = line.query_name.split("_")[1]
         pair_tag = label.split("#")[1]
+        if line.is_read1:
+            pair_tag = f"{pair_tag}:1"
+        else:
+            pair_tag = f"{pair_tag}:2"
         if o.UMI:
             if "RF" in pair_tag:
                 umi_tag = label.split("#")[0][6:] + label.split("#")[0][0:6]
