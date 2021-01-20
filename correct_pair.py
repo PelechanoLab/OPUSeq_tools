@@ -20,9 +20,11 @@ class ReadPair(object):
         else:
             self.read2 = read
 
-    def update_proper_pair(self):
+    def update_proper_pair(self, order):
         self.read1.is_proper_pair = True
         self.read2.is_proper_pair = True
+        self.id = f"{self.id}#{order}"
+        self.read1.query_name = self.read2.query_name = self.id
 
     def check_proper_pair(self):
         write_output = False
@@ -30,14 +32,14 @@ class ReadPair(object):
             if not self.read2.is_reverse:
                 self.r1f2 += 1
                 write_output = True
-                self.update_proper_pair()
+                self.update_proper_pair("RF")
             else:
                 self.r1r2 += 1
         else:
             if self.read2.is_reverse:
                 self.f1r2 += 1
                 write_output = True
-                self.update_proper_pair()
+                self.update_proper_pair("FR")
             else:
                 self.f1f2 += 1
         return write_output, self.f1r2, self.r1f2, self.f1f2, self.r1r2
@@ -69,6 +71,7 @@ tmp_file.close()
 pysam.sort("-o",sys.argv[2],"tmp.bam")
 pysam.index(sys.argv[2])
 os.remove("tmp.bam")
+
 stat_file = open(sys.argv[3],"w")
 stat_file.write("#Read pairs in F1R2: " + str(pair_types[0]) + "\n")
 stat_file.write("#Read pairs in R1F2: " + str(pair_types[1]) + "\n")
