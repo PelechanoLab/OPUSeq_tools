@@ -68,11 +68,12 @@ for read in input_file.fetch(until_eof=True):
 input_file.close()
 tmp_file.close()
 
-pysam.sort("-o",sys.argv[2],"tmp.bam")
-pysam.index(sys.argv[2])
+output_bam = sys.argv[1].replace(".bam","_properPair.bam")
+pysam.sort("-o",output_bam,"tmp.bam")
+pysam.index(output_bam)
 os.remove("tmp.bam")
 
-stat_file = open(sys.argv[3],"w")
+stat_file = open(sys.argv[1].replace(".bam","_readPair.stat"),"w")
 stat_file.write("#Read pairs in F1R2: " + str(pair_types[0]) + "\n")
 stat_file.write("#Read pairs in R1F2: " + str(pair_types[1]) + "\n")
 stat_file.write("#Read pairs in F1F2: " + str(pair_types[2]) + "\n")
