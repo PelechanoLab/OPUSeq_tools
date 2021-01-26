@@ -1,3 +1,19 @@
+##TO DO
+##1. Make it possible to process read families where not all reads are of the same length ##Jingwen
+##2. Use UMIs processed by UMI-tools ##Alisa
+##3. Fix quality score calculator (average instead of sum?)
+##4. Is it possible to collapse reads with the same UMI but SLIGHTLY different boundaries? 
+##5. Correct UMI errors left unfixed by UMI-tools? (likely not)
+##6. Potentially find out how often DCS for read 1 and 2 differ (could also be a way to check that everything works as intended)
+##7. Should we leave the minimum required family size as 3, or try also with smaller min family size?
+##8. Keep the max family size or not? Perhaps exclude families with a too large size? But then, how to decide which size is too large? This is dataset-dependent. 
+##9. Keep the homopolymer filter in UMI or not?
+##10. Do we need to add a way to deal with DCSs of different length? It has not happened so far, but is possible in principle.
+##11. Right now, the start coordinate is recorded only as the position, but not contig. To make this script universally useful, we would also need to add the contig.
+##12.The number of SSCS which should go into the DCS making according to current counters does not correspond to the number of DCSs (made + failed). 
+##The resulting DCS bam files cannot be sorted or indexed. This needs to be fixed.
+
+
 import os
 import sys
 import pysam
@@ -27,6 +43,8 @@ class iteratorWrapper:
         return(temp)
     next = __next__
 
+##The consensus caller script takes an object containing all the reads belonging to the same family (defined somewhere else) and makes the consensus sequence. It creates a list containing the counts of each nucleotide at each position, and then for each position, to the consensus seq it writes either the nucleotide that is above a certain threshold/cutoff (0.7 by default) or N.
+    
 def consensus_caller(input_reads, cutoff, tag):
 
     nuc_identity_list = [0, 0, 0, 0, 0, 0]
@@ -72,7 +90,7 @@ def consensus_caller(input_reads, cutoff, tag):
 
     return consensus_seq
 
-
+##calculates a quality score from qual_list object as the sum of quality scores of all bases at each position across reads. Should we not calculate some kind of average? Otherwise, won't the score differ a lot based on the family size?
 def qual_calc(qual_list):
     return [sum(qual_score) for qual_score in zip(*qual_list)]
 
@@ -180,10 +198,16 @@ def main():
         help="Proportion of read pairs to output as fastq to align for determining raw reads on target.  "
     )
     parser.add_argument(
-        '--UMI',
-        dest='UMI',
+        '--UMI_in_tag',
+        dest='UMI_in_tag',
         action="store_true",
         help = "Use UMI for generating consensus sequences."
+    )
+    parser.add_argument(
+        '--UMI_in_name',
+        dest='UMI_in_name',
+        action="store_true",
+        help = "Provided files have UMI in the read name, e.g. OPUS-seq processed with UMI-tools extract."
     )
     o = parser.parse_args()
     # adjust number of cores
@@ -199,6 +223,8 @@ def main():
     paired_end_count = 0
     # Counter for number of families
     familyCtr = 0
+    # Counter for SSCS families where read length is not uniform
+    badReadLength = 0
     # Counter for DCS UMIs with bad UMIs
     badUMIs = 0
     # Counter for reads processed
@@ -220,7 +246,7 @@ def main():
 
     # Open Files
     if o.write_sscs is True:
-        if o.UMI:
+        if o.UMI_in_tag or o.UMI_in_name:
             sscs_bam_file = pysam.AlignmentFile(f"{o.prefix}.sscs_UMI.bam",
                                                 'wb', template=in_bam_file)
         else:
@@ -230,7 +256,7 @@ def main():
         read2_sscs_fq_file = gzip.open(f"{o.prefix}_read2_sscs.fq.gz", 'wt')
 
     if o.without_dcs is False:
-        if o.UMI:
+        if o.UMI_in_tag or o.UMI_in_name:
             dcs_bam_file = pysam.AlignmentFile(f"{o.prefix}.dcs_UMI.bam",
                                                'wb', template=in_bam_file)
         else:
@@ -245,14 +271,7 @@ def main():
 #        fAlign1 = gzip.open(f"{o.prefix}_aln_seq1.fq.gz", 'wt')
 #        fAlign2 = gzip.open(f"{o.prefix}_aln_seq2.fq.gz", 'wt')
 
-    # This block of code takes an unaligned bam file, extracts the tag
-    # sequences from the reads, and converts them to to "FR/RF" format
-    # where 'a' and 'b' are the tag sequences from Read 1 and Read 2,
-    # respectively. Conversion occurs by putting the tag with the "lesser"
-    # value in front of the tag with the "higher" value. The original
-    # tag orientation is denoted by appending #FR or #RF to the end of
-    # the tag. After conversion, the resulting temporary bam file is then
-    # sorted by read name.
+    # This block of code takes an unaligned bam file, extracts the coordinates, UMIs and the FR/RF tags (the latter), and makes a final tag out of all those. If the UMI argument is set to FALSE, only coordinates are used and not UMI. The reads acquire a tag like e.g. "start_insertSize_UMI_FR:1".
 
     for line in in_bam_file.fetch(until_eof=True):
         original_name = line.query_name
@@ -260,24 +279,38 @@ def main():
             query_name = f"{line.next_reference_start+1}_{abs(line.template_length)}"
         else:
             query_name = f"{line.reference_start+1}_{abs(line.template_length)}"
-        label = line.query_name.split("_")[1]
-        pair_tag = label.split("#")[1]
+        pair_tag = line.query_name.split("#")[1]
         if line.is_read1:
             pair_tag = f"{pair_tag}:1"
         else:
             pair_tag = f"{pair_tag}:2"
-        if o.UMI:
+        label = line.query_name.split("_")[1]
+        ##different ways to handle UMI depending on whether data is OPUS-seq or not, whether we want to use UMI at all, and whether UMIs have been grouped by UMI-tools.
+        if o.UMI_in_tag: ##option for data processed by UMI-tools group where the consensus UMI is in BX tag in bam
+            if o.UMI_in_name:
+                raise Exception(f'ERROR: Cannot use UMI from name and tag simultaneously')
+            elif "RF" in pair_tag:
+                if line.has_tag("BX"):
+                    umi_tag = line.get_tag("BX")[6:] + line.get_tag("BX")[0:6]
+                else:
+                    umi_tag = label.split("#")[0][6:] + label.split("#")[0][0:6]
+            else:
+                if line.has_tag("BX"):
+                    umi_tag = line.get_tag("BX")
+                else:
+                    umi_tag = label.split("#")[0]
+            query_name += f"_{umi_tag}#{pair_tag}"            
+        elif o.UMI_in_name: ##option for data which has a UMI and has been processed by UMI-tools, extracting UMI into file name 
             if "RF" in pair_tag:
                 umi_tag = label.split("#")[0][6:] + label.split("#")[0][0:6]
             else:
                 umi_tag = label.split("#")[0]
             query_name += f"_{umi_tag}#{pair_tag}"
-        else:
-            query_name += f"#{pair_tag}"
+        else: ##option for data without UMI:
+            query_name += f"#{pair_tag}"            
         line.query_name = query_name
-        line.set_tag('X?', original_name, 'Z')
+        line.set_tag('X?', original_name, 'Z') ##
         temp_bam.write(line)
-
         paired_end_count += 1
 
     in_bam_file.close()
@@ -311,10 +344,12 @@ def main():
     tag_count_dict = defaultdict(lambda: 0)
 
     print("Creating consensus reads...")
-
+    
+    ########SSCS calling
     for line in iteratorWrapper(in_bam_file.fetch(until_eof=True), FinalValue):
-        tag = first_line.query_name.split('#')[0]
-        subtag_order = first_line.query_name.split('#')[1]
+        tag = first_line.query_name.split('#')[0] ##get tag from query name (the UMI and the coordinates)
+        subtag_order = first_line.query_name.split('#')[1] ##this is either "FR:1", "FR:2", "RF:1", or "RF:2" 
+        ##iterate through the other reads looking for reads with the same tag (coordinate + UMI). When found, write their sequences and quality scores to the dictionaries containing those under the appropriate "subtag".
         if line.query_name.split('#')[0] == tag:
             readsCtr += 1
             seq_dict[line.query_name.split('#')[1]].append(
@@ -324,35 +359,35 @@ def main():
                 list(line.query_qualities)
             )
             last_seq[line.query_name.split('#')[1]] = line
-
+        ##count reads with subtags "FR:1", "FR:2", "RF:1", or "RF:2", and if 1&2 numbers don't match, raise error. 
+        ##These are reads 1 and 2 of the same orientation, so there should be the same number. 
         else:
             famSizes = {x: len(seq_dict[x]) for x in seq_dict}
-            if (famSizes['FR:1'] != famSizes['FR:2']
-                    or famSizes['RF:1'] != famSizes['RF:2']
-                    ):
+            if (famSizes['FR:1'] != famSizes['FR:2'] or famSizes['RF:1'] != famSizes['RF:2']):
                 raise Exception(f'ERROR: Read counts for Read1 and Read 2 do '
                                 f'not match for tag {tag}'
                                 )
-
             for tag_subtype in seq_dict.keys():
                 imbalance = False
+                ##check that all reads within a family are the same length. If not, the family will be empty and counted as badReadLength.
                 for read in seq_dict[tag_subtype][1:]:
                     if len(read) != len(seq_dict[tag_subtype][0]):
-                        #print((f"Read lengths for tag {tag} used for "
-                        #       f"calculating the SSCS are not uniform!!!"
-                        #       ))
                         imbalance = True
+                        badReadLength += 1
 
                 if not imbalance:
                     if famSizes[tag_subtype] > 0:
-                        tag_count_dict[famSizes[tag_subtype]] += 1
+                        tag_count_dict[famSizes[tag_subtype]] += 1 ##dict with counters for each family size, i.e. how many families there are with 1,2,3 etc. members
                         familyCtr += 1
+                        ##if family size is zero, count under zeroFamilySize. However, these families are KEPT in the dict. 
                     if famSizes[tag_subtype] == 0:
                         zeroFamilySize += 1
+                        ##if family size is smaller than specified minimum (but not zero), delete it from dict and count as smallFamilySize:
                     elif famSizes[tag_subtype] < o.minmem:
                         seq_dict[tag_subtype] = []
                         qual_dict[tag_subtype] = []
                         smallFamilySize += 1
+                        ##if family size within the specified limits, run consensus caller on it and write the resulting sequence and family size to the seq_dict; count as numSSCS:
                     elif o.minmem <= famSizes[tag_subtype] <= o.maxmem:
                         # Tag types w/o reads should not be submitted as long as
                         # minmem is > 0
@@ -363,8 +398,9 @@ def main():
                                             ),
                             str(famSizes[tag_subtype])
                         ]
-                        qual_dict[tag_subtype] = qual_calc(qual_dict[tag_subtype])
+                        qual_dict[tag_subtype] = qual_calc(qual_dict[tag_subtype]) ##calculate quality score and write that to the qual_dict
                         numSSCS += 1
+                        ##if family size is greater than the specified maximum, call consensus using all the reads up until the limit (the specified maximum). We may want to remove this, or else exclude families with huge sizes since they are likely artifacts.
                     elif famSizes[tag_subtype] > o.maxmem:
                         seq_dict[tag_subtype] = [
                             consensus_caller(seq_dict[tag_subtype][:o.maxmem],
@@ -378,7 +414,7 @@ def main():
                 else:
                     seq_dict[tag_subtype] = []
                     qual_dict[tag_subtype] = []
-
+            ########Write SSCS to fastq
             if o.write_sscs is True:
 
                 if len(seq_dict['FR:1']) != 0 and len(seq_dict['FR:2']) != 0:
@@ -453,14 +489,16 @@ def main():
 
                     sscs_bam_file.write(RF_read1)
                     sscs_bam_file.write(RF_read2)
-
+                    
+            ########DCS calling
             if o.without_dcs is False:
                 if len(seq_dict['FR:1']) != 0 and len(seq_dict['RF:2']) != 0:
                     numDCS += 1
+                    ##dcs_read is a list of the DCS made by consensus caller and the family sizes of SSCSs
                     dcs_read_1 = [
                         consensus_caller(
                             [seq_dict['FR:1'][0], seq_dict['RF:2'][0]],
-                            1,
+                            1, ##"1" means that a base is called ONLY if it is the same in both the SSCSs, otherwise N is written. 
                             tag,
                         ),
                         seq_dict['FR:1'][1], seq_dict['RF:2'][1]
@@ -470,15 +508,16 @@ def main():
                         qual_calc([qual_dict['FR:1'], qual_dict['RF:2']])
                     )
                     read1_dcs_len = len(dcs_read_1[0])
-                    fam_size_x_axis.append(int(seq_dict['FR:1'][1]))
+                    fam_size_x_axis.append(int(seq_dict['FR:1'][1])) ##this is for plotting family sizes later
                     fam_size_y_axis.append(int(seq_dict['RF:2'][1]))
-
+                    ##check that there are not more Ns that acceptable (the N cutoff specified). If there are too many, re-write everything with N and quality with zero.
+					##The default cutoff is 1, which means that this filter is NOT applied at all by default.
                     if dcs_read_1[0].count('N') / read1_dcs_len > o.Ncutoff:
                         highN_DCS += 1
                         dcs_read_1[0] = 'N' * read1_dcs_len
                         dcs_read_1_qual = [0 for x in range(read1_dcs_len)]
                 else:
-                    failedDcs += 1
+                    failedDcs += 1 ##if one or both of the strands are not present
                 if len(seq_dict['RF:1']) != 0 and len(seq_dict['FR:2']) != 0:
                     numDCS += 1
                     dcs_read_2 = [
@@ -501,6 +540,7 @@ def main():
                         dcs_read_2_qual = [0 for x in range(read2_dcs_len)]
                 else:
                     failedDcs += 1
+                ##check for homopolymer repeats in UMI
                 if (read1_dcs_len != 0
                         and read2_dcs_len != 0
                         and tag.count('N') == 0
@@ -509,12 +549,13 @@ def main():
                         and 'G' * o.rep_filt not in tag
                         and 'T' * o.rep_filt not in tag
                 ):
+                ##write DCS fastq files
                     r1QualStr = ''.join(chr(x + 33) for x in dcs_read_1_qual)
                     r2QualStr = ''.join(chr(x + 33) for x in dcs_read_2_qual)
                     read1_dcs_fq_file.write(
                         f"@{tag}/1 XF:Z:{dcs_read_1[1]}:{dcs_read_1[2]}\n"
                         f"{dcs_read_1[0]}\n"
-                        f"+{dcs_read_1[1]}:{dcs_read_1[2]}\n"
+                        f"+{dcs_read_1[1]}:{dcs_read_1[2]}\n" ##this writes the family sizes of the SSCSs to the third line in fastq files
                         f"{r1QualStr}\n"
                     )
                     read2_dcs_fq_file.write(
@@ -523,7 +564,7 @@ def main():
                         f"+{dcs_read_2[1]}:{dcs_read_2[2]}\n"
                         f"{r2QualStr}\n"
                     )
-
+                    ##write DCS bam file
                     read1 = last_seq['FR:1']
                     read2 = last_seq['FR:2']
                     read1.query_name = tag
@@ -542,7 +583,7 @@ def main():
                       or 'G' * o.rep_filt in tag
                       or 'T' * o.rep_filt in tag
                 ):
-                    badUMIs += 1
+                    badUMIs += 1 ##badUMIs counts UMIs with either homopolymer repeats OR an N.
 
             if line != FinalValue:
                 readsCtr += 1
@@ -624,16 +665,15 @@ def main():
         f"Finished at {endTimeStr}\n"
         f"{paired_end_count} reads UMI processed\n"
         f"{readsCtr} reads processed\n"
-        f"{familyCtr} families processed\n"
-        f"{familyCtr} families processed\n"
-        f"\t{zeroFamilySize} unrepresented families\n"
+        f"{badReadLength} families with non-uniform read length, excluded\n"
+        f"{zeroFamilySize} families with zero reads\n"
+        f"{familyCtr} families with uniform reads, of these:\n"
         f"\t{smallFamilySize} families with family size < {o.minmem}\n"
-        f"\t{badUMIs} families (DCS pairs) filtered for UMIs with mononucleotide repeats\n"
-        f"{numSSCS} SSCS made\n"
-        f"\t{highN_SSCS} SSCS filtered for excessive Ns\n"
-        f"{numDCS} DCS made\n"
-        f"\t{failedDcs} DCS failed due to missing SSCS\n"
-        f"\t{highN_DCS} DCS filtered for excessive Ns\n"
+        f"\t{numSSCS} families with size > {o.minmem}, made into SSCS\n"
+        f"{numDCS} DCS made successsfully\n"
+        f"{failedDcs} DCS failed due to missing SSCS\n"
+        f"{unequalR1R2} cases with unequal reads 1 and 2"
+        f"{badUMIs} DCS excluded due to UMIs with mononucleotide repeats or Ns\n"
         )
     cmStatsFile.close()
     sys.stderr.write(
@@ -643,17 +683,17 @@ def main():
         f"Finished at {endTimeStr}\n"
         f"{paired_end_count} reads UMI processed\n"
         f"{readsCtr} reads processed\n"
-        f"{familyCtr} families processed\n"
-        f"\t{zeroFamilySize} unrepresented families\n"
-        f"\t{smallFamilySize} families with family size < {o.minmem}, but > 0\n"
-        f"\t{badUMIs} families (DCS pairs) filtered for UMIs with mononucleotide repeats\n"
-        f"{numSSCS} SSCS made\n"
-        f"\t{highN_SSCS} SSCS filtered for excessive Ns\n"
-        f"{numDCS} DCS made\n"
-        f"\t{failedDcs} DCS failed due to missing SSCS\n"
-        f"\t{highN_DCS} DCS filtered for excessive Ns\n"
+        f"{badReadLength} families with non-uniform read length, excluded\n"
+        f"{zeroFamilySize} families with zero reads\n"
+        f"{familyCtr} families with uniform reads, of these:\n"
+        f"\t{smallFamilySize} families with family size < {o.minmem}\n"
+        f"\t{numSSCS} families with size > {o.minmem}, made into SSCS\n"
+        f"{numDCS} DCS made successsfully\n"
+        f"{failedDcs} DCS failed due to missing SSCS\n"
+        f"{badUMIs} DCS excluded due to UMIs with mononucleotide repeats or Ns\n"
         )
-
+    ##remove the temp sorted bam    
+    os.remove(f"{o.prefix}.temp.sort.bam")    
 
 
 
