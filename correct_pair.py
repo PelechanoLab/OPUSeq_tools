@@ -62,6 +62,18 @@ def main():
         help = 'Path to aligned, paired-end, bam file.'
         )
     parser.add_argument(
+        '--out',
+        dest = 'out_bam',
+        required = True,
+        help = 'Path to output bam file.'
+        )
+    parser.add_argument(
+        '--stat',
+        dest = 'stats_file',
+        required = True,
+        help = 'Path to stats file.'
+        )
+    parser.add_argument(
         "--UMI-group",
         dest='umi_group',
         help="Path to grouped UMI file (tsv format)."
@@ -105,12 +117,12 @@ def main():
     input_file.close()
     tmp_file.close()
 
-    output_bam = arg.in_bam.replace(".bam","_properPair.bam")
+    output_bam = arg.out_bam
     pysam.sort("-o",output_bam,"tmp.bam")
     pysam.index(output_bam)
     os.remove("tmp.bam")
 
-    stat_file = open(arg.in_bam.replace(".bam","_readPair.stat"),"w")
+    stat_file = open(arg.stats_file,"w")
     stat_file.write("#Read pairs in F1R2: " + str(pair_types[0]) + "\n")
     stat_file.write("#Read pairs in R1F2: " + str(pair_types[1]) + "\n")
     stat_file.write("#Read pairs in F1F2: " + str(pair_types[2]) + "\n")
