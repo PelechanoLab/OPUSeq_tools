@@ -2,7 +2,7 @@
 
 ## Overview of pipeline
 
-The pipeline for OPUSeq data analysis is made up of a series of bash scripts. Using Slurm, the master script main.sh submits the other scripts in an order depending on the type of analysis desired. The file var.txt specifies all variables. See the file OPUSeq_pipeline.png for an overview of which scripts will be run depending on specified varibles. The input is paired end FASTQ files which come from either OPUSeq or standard DNA sequencing. The read names must end in *R1.fastq.gz and *R2.fastq.gz.
+The pipeline for OPUSeq data analysis is made up of a series of bash scripts. Using Slurm, the master script main.sh submits the other scripts in an order depending on the type of analysis desired. The file var.txt specifies all variables. See the file OPUSeq_pipeline.png for an overview of which scripts will be run depending on specified varibles. The input is paired end FASTQ files which come from either OPUSeq or standard DNA sequencing. The read names must end in *R1.fastq.gz and *R2.fastq.gz. All the .sh and .py scripts, the var.txt file, and the .bed files should be placed in the same subdirectory "scr" inside the main directory. 
 
 ###### List of necessary software
 - Python (v. 3.7.2)
