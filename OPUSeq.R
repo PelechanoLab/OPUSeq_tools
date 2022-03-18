@@ -70,7 +70,10 @@ summary_file <- function(fragment){
     Sample <- Sample[which(Sample$pos!=534332),]
     Sample <- Sample[which(Sample$pos!=534197),]
     Sample <- Sample[which(Sample$pos!=534242),]
-    samples$total_bases[i] <- sum(Sample$ref_count) + sum(Sample$var_count)
+    Sample$id <- paste(Sample$pos,Sample$ref_count,sep="_")
+    unique_ref <- unique(Sample$id)
+    unique_ref <- as.numeric(sapply(strsplit(unique_ref,split="_"), function(a) a[2]))
+    samples$total_bases[i] <- sum(unique_ref) + sum(Sample$var_count)
     samples$var_bases[i] <- sum(Sample$var_count)
     samples$incidence[i] <- samples$var_bases[i] / samples$total_bases[i]
     samples$vars[i] <- sum(Sample$var_count > 0)
@@ -486,7 +489,10 @@ for (i in 1:dim(samples)[1]){
   if (samples$dna[i] == "hs"){
     Sample <- Sample[which(Sample$pos!=534197),]
   }
-  samples$total_bases[i] <- sum(Sample$ref_count) + sum(Sample$var_count)
+  Sample$id <- paste(Sample$pos,Sample$ref_count,sep="_")
+  unique_ref <- unique(Sample$id)
+  unique_ref <- as.numeric(sapply(strsplit(unique_ref,split="_"), function(a) a[2]))
+  samples$total_bases[i] <- sum(unique_ref) + sum(Sample$var_count)
   samples$var_bases[i] <- sum(Sample$var_count)
   samples$incidence[i] <- samples$var_bases[i] / samples$total_bases[i]
   samples$vars[i] <- sum(Sample$var_count > 0)
@@ -593,7 +599,10 @@ for (j in 1:11){
     Sample <- Sample[which(Sample$pos!=534332),]
     Sample <- Sample[which(Sample$pos!=534197),]
     Sample <- Sample[which(Sample$pos!=534242),]
-    samples$total_bases[l] <- sum(Sample$ref_count) + sum(Sample$var_count)
+    Sample$id <- paste(Sample$pos,Sample$ref_count,sep="_")
+    unique_ref <- unique(Sample$id)
+    unique_ref <- as.numeric(sapply(strsplit(unique_ref,split="_"), function(a) a[2]))
+    samples$total_bases[l] <- sum(unique_ref) + sum(Sample$var_count)
     samples$var_bases[l] <- sum(Sample$var_count)
     samples$incidence[l] <- samples$var_bases[l] / samples$total_bases[l]
     samples$vars[l] <- sum(Sample$var_count > 0)
