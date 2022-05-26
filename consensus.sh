@@ -26,13 +26,13 @@ then
 		then
 			if $sscs
 			then
-				python ../scr/consensus_read_mod.py --input $i --UMI_in_name --prefix $SAMPLE --minmem $minmem --numCores 2 --tagstats --write-sscs
+				python ../scr/consensus_read_mod.py --input $i --UMI_in_tag --prefix $SAMPLE --minmem $minmem --numCores 2 --tagstats --write-sscs
 			else
-				python ../scr/consensus_read_mod.py --input $i --UMI_in_name --prefix $SAMPLE --minmem $minmem --numCores 2 --tagstats
+				python ../scr/consensus_read_mod.py --input $i --UMI_in_tag --prefix $SAMPLE --minmem $minmem --numCores 2 --tagstats
 			fi
 		elif $sscs
 		then
-			python ../scr/consensus_read_mod.py --input $i --UMI_in_name --prefix $SAMPLE --minmem $minmem --numCores 2 --tagstats --without-dcs --write-sscs
+			python ../scr/consensus_read_mod.py --input $i --UMI_in_tag --prefix $SAMPLE --minmem $minmem --numCores 2 --tagstats --without-dcs --write-sscs
 		fi
 	done
 fi 
